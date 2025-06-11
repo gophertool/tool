@@ -3,10 +3,24 @@ name: Release Workflow
 on:
   push:
     branches: [ main ]
+    paths:
+      - '**.go'      # Go代码文件变更
+      - 'go.mod'     # 依赖变更
+      - 'go.sum'     # 依赖变更
   pull_request:
     branches: [ main ]
+    paths:
+      - '**.go'      # Go代码文件变更
+      - 'go.mod'     # 依赖变更
+      - 'go.sum'     # 依赖变更
   workflow_dispatch:
     # 允许手动触发工作流
+    inputs:
+      force_tag:
+        description: '强制创建新标签'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
   test-and-tag:
@@ -26,12 +40,32 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
+      - name: Check for code changes
+        id: check_changes
+        run: |
+          # 检查是否有Go代码文件变更
+          CHANGED_GO_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '\.go$' | wc -l)
+          echo "go_files_changed=$CHANGED_GO_FILES" >> $GITHUB_OUTPUT
+          
+          # 检查是否有依赖变更
+          CHANGED_DEP_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E 'go\.mod|go\.sum' | wc -l)
+          echo "dep_files_changed=$CHANGED_DEP_FILES" >> $GITHUB_OUTPUT
+          
+          # 确定是否需要更新版本号
+          if [[ "$CHANGED_GO_FILES" -gt 0 || "$CHANGED_DEP_FILES" -gt 0 || "${{ github.event.inputs.force_tag }}" == 'true' ]]; then
+            echo "update_version=true" >> $GITHUB_OUTPUT
+          else
+            echo "update_version=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Get current date
         id: date
+        if: steps.check_changes.outputs.update_version == 'true' || github.event_name == 'workflow_dispatch'
         run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
 
       - name: Get latest tag
         id: get_latest_tag
+        if: steps.check_changes.outputs.update_version == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           # 获取最新的标签
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
@@ -51,6 +85,7 @@ jobs:
 
       - name: Create new tag
         id: create_tag
+        if: steps.check_changes.outputs.update_version == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           # 增加修订号
           MAJOR=${{ steps.get_latest_tag.outputs.major }}
