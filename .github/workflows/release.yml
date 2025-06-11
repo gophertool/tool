@@ -1,0 +1,72 @@
+name: Release Workflow
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    # 允许手动触发工作流
+
+jobs:
+  test-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取所有历史记录和标签
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.2' # 使用与go.mod中相同的版本
+          check-latest: true
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      - name: Get latest tag
+        id: get_latest_tag
+        run: |
+          # 获取最新的标签
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          # 提取版本号部分
+          VERSION=$(echo $LATEST_TAG | grep -oP 'v\d+\.\d+\.\d+' || echo "v0.0.0")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # 提取主版本号、次版本号和修订号
+          MAJOR=$(echo $VERSION | cut -d. -f1 | sed 's/v//')
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+
+      - name: Create new tag
+        id: create_tag
+        run: |
+          # 增加修订号
+          MAJOR=${{ steps.get_latest_tag.outputs.major }}
+          MINOR=${{ steps.get_latest_tag.outputs.minor }}
+          PATCH=$((${{ steps.get_latest_tag.outputs.patch }} + 1))
+          
+          # 创建新标签
+          NEW_TAG="v$MAJOR.$MINOR.$PATCH-${{ steps.date.outputs.date }}"
+          echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          
+          # 配置Git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # 创建并推送标签
+          git tag $NEW_TAG
+          git push origin $NEW_TAG
+          
+          echo "Successfully created and pushed tag: $NEW_TAG"
