@@ -42,7 +42,7 @@ func TestLoadFromFile(t *testing.T) {
 func TestLoadFromURL(t *testing.T) {
 	// 这个测试需要一个有效的图片URL和网络连接
 	// 在实际测试中，你需要提供一个有效的图片URL
-	url := "https://webp.im/OF30tk.webp"
+	url := "https://raw.githubusercontent.com/gophertool/tool/refs/heads/main/image/test.png"
 
 	loader := imageutil.NewLoader()
 	img, err := loader.LoadFromURL(url)
