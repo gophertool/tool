@@ -1,77 +1,177 @@
-name: Release Workflow
+# ==================================================================
+# GopherTool 项目自动化发布工作流
+# 
+# 功能说明：
+# 1. 当主分支有Go代码变更时自动触发
+# 2. 运行测试确保代码质量
+# 3. 自动检测版本更新并生成新的版本标签
+# 4. 支持手动触发发布流程
+# 5. 自动更新代码中的版本号
+# 
+# 工作流程：
+# - 检出代码 -> 设置Go环境 -> 运行测试 -> 检查版本更新 -> 创建标签
+# ==================================================================
 
+name: 发布工作流
+
+# 触发条件配置
 on:
+  # 当推送到主分支且包含Go相关文件变更时触发
   push:
-    branches: [ main ]
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
+    branches: [ main ]  # 仅在主分支触发
+    paths:              # 仅当以下路径的文件发生变更时触发
+      - '**.go'         # 所有Go源代码文件
+      - 'go.mod'        # Go模块定义文件
+      - 'go.sum'        # Go模块依赖校验文件
+  # 支持手动触发工作流
   workflow_dispatch:
 
 jobs:
+  # 测试和标签创建任务
   test-and-tag:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # 在最新的Ubuntu环境中运行
     permissions:
-      contents: write
+      contents: write       # 需要写入权限以创建标签和提交代码
     steps:
-      - name: Checkout code
+      # ============================================================
+      # 步骤1: 检出代码仓库
+      # ============================================================
+      - name: 检出代码仓库
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0    # 获取完整的Git历史，用于标签操作
 
-      - name: Set up Go
+      # ============================================================
+      # 步骤2: 设置Go开发环境
+      # ============================================================
+      - name: 设置Go开发环境
         uses: actions/setup-go@v4
         with:
-          go-version: '1.24'
+          go-version: '1.24'  # 使用Go 1.24版本
 
-      - name: Run tests
+      # ============================================================
+      # 步骤3: 运行项目测试
+      # ============================================================
+      - name: 运行项目测试
         run: go test -v ./...
 
-      - name: Check for version update in commit
+      # ============================================================
+      # 步骤4: 检查提交是否涉及代码文件
+      # ============================================================
+      - name: 检查提交的代码文件变更
+        id: check_code_changes
+        run: |
+          # 获取当前提交相对于上一个提交的变更文件列表
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          
+          echo "本次提交涉及的文件:"
+          echo "$CHANGED_FILES"
+          
+          # 检查是否包含Go代码文件或相关配置文件
+          CODE_FILES_CHANGED=false
+          
+          # 检查是否有.go文件变更
+          if echo "$CHANGED_FILES" | grep -E '\.go$'; then
+            echo "检测到Go源代码文件变更"
+            CODE_FILES_CHANGED=true
+          fi
+          
+          # 检查是否有go.mod或go.sum文件变更
+          if echo "$CHANGED_FILES" | grep -E '^go\.(mod|sum)$'; then
+            echo "检测到Go模块配置文件变更"
+            CODE_FILES_CHANGED=true
+          fi
+          
+          # 检查是否有测试文件变更
+          if echo "$CHANGED_FILES" | grep -E '_test\.go$'; then
+            echo "检测到Go测试文件变更"
+            CODE_FILES_CHANGED=true
+          fi
+          
+          # 输出检查结果
+          if [ "$CODE_FILES_CHANGED" = true ]; then
+            echo "has_code_changes=true" >> $GITHUB_OUTPUT
+            echo "✅ 本次提交包含代码相关文件，将继续执行版本发布流程"
+          else
+            echo "has_code_changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ 本次提交未包含代码相关文件，跳过版本发布流程"
+            echo "只有以下类型的文件变更会触发版本发布:"
+            echo "  - .go文件（Go源代码）"
+            echo "  - go.mod文件（Go模块定义）"
+            echo "  - go.sum文件（Go模块依赖校验）"
+            echo "  - _test.go文件（Go测试文件）"
+          fi
+
+      # ============================================================
+      # 步骤5: 检查提交信息中是否包含版本更新
+      # ============================================================
+      - name: 检查提交信息中的版本更新
         id: check_version
         run: |
+          # 获取最新提交的信息
           COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          # 检查提交信息是否包含版本更新关键词
           if echo "$COMMIT_MSG" | grep -E 'update version to|bump version|version:'; then
+            # 从提交信息中提取版本号（格式：vX.Y.Z-YYYYMMDD）
             VERSION=$(echo "$COMMIT_MSG" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}')
             if [ ! -z "$VERSION" ]; then
               echo "has_version_update=true" >> $GITHUB_OUTPUT
               echo "commit_version=$VERSION" >> $GITHUB_OUTPUT
-              echo "Found version update in commit: $VERSION"
+              echo "在提交信息中发现版本更新: $VERSION"
             fi
           else
             echo "has_version_update=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update version in code from commit
-        if: steps.check_version.outputs.has_version_update == 'true'
+      # ============================================================
+      # 步骤6: 根据提交信息更新代码中的版本号
+      # ============================================================
+      - name: 根据提交信息更新代码版本号
+        if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update == 'true'
         id: update_from_commit
         run: |
+          # 获取从提交信息中提取的版本号
           VERSION=${{ steps.check_version.outputs.commit_version }}
+          
+          # 获取代码中当前的版本号
           CURRENT_VERSION=$(grep -oE 'Version = "v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}"' tool.go | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}' || echo "")
           
-          echo "Current version in code: $CURRENT_VERSION"
-          echo "Version from commit: $VERSION"
+          echo "代码中当前版本: $CURRENT_VERSION"
+          echo "提交信息中的版本: $VERSION"
           
+          # 如果版本号不一致，则更新代码中的版本号
           if [ "$CURRENT_VERSION" != "$VERSION" ]; then
+            # 使用sed命令替换tool.go文件中的版本号
             sed -i "s/Version = \".*\"/Version = \"$VERSION\"/" tool.go
             
+            # 配置Git用户信息
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"
+            
+            # 提交版本更新
             git add tool.go
-            git commit -m "Update version to $VERSION [skip ci]"
+            git commit -m "更新版本号至 $VERSION [skip ci]"
             git push
+            
             echo "updated=true" >> $GITHUB_OUTPUT
-            echo "Version updated to $VERSION"
+            echo "版本号已更新至 $VERSION"
           else
             echo "updated=false" >> $GITHUB_OUTPUT
-            echo "Version is already up to date"
+            echo "版本号已是最新，无需更新"
           fi
 
-      - name: Check if latest commit has a tag
+      # ============================================================
+      # 步骤7: 检查当前提交是否已有标签
+      # ============================================================
+      - name: 检查当前提交的标签状态
+        if: steps.check_code_changes.outputs.has_code_changes == 'true'
         id: check_tag
         run: |
+          # 获取最新提交的哈希值
           LATEST_COMMIT=$(git rev-parse HEAD)
+          
+          # 检查当前提交是否已有标签
           TAG_AT_COMMIT=$(git tag --points-at $LATEST_COMMIT)
           
           if [ -z "$TAG_AT_COMMIT" ]; then
@@ -79,103 +179,132 @@ jobs:
           else
             echo "has_tag=true" >> $GITHUB_OUTPUT
             echo "tag=$TAG_AT_COMMIT" >> $GITHUB_OUTPUT
-            echo "Found tag at current commit: $TAG_AT_COMMIT"
+            echo "当前提交已存在标签: $TAG_AT_COMMIT"
           fi
 
-      - name: Get current date
+      # ============================================================
+      # 步骤8: 获取当前日期（用于版本号生成）
+      # ============================================================
+      - name: 获取当前日期
         id: date
-        if: steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
+        if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
 
-      - name: Get latest tag
+      # ============================================================
+      # 步骤9: 获取最新的版本标签
+      # ============================================================
+      - name: 获取最新版本标签
         id: latest_tag
-        if: steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
+        if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: |
+          # 获取所有标签
           git fetch --tags
+          
+          # 获取最新的版本标签（按版本号排序）
           LATEST_TAG=$(git tag -l "v*" --sort=-v:refname | head -n 1)
           
+          # 如果没有标签，则设置默认值
           if [ -z "$LATEST_TAG" ]; then
             echo "tag=v0.0.0" >> $GITHUB_OUTPUT
           else
             echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           fi
           
-          echo "Latest tag: $LATEST_TAG"
+          echo "最新标签: $LATEST_TAG"
 
-      - name: Create new tag
+      # ============================================================
+      # 步骤10: 创建新的版本标签
+      # ============================================================
+      - name: 创建新版本标签
         id: new_tag
-        if: steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
+        if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: |
           LATEST_TAG=${{ steps.latest_tag.outputs.tag }}
           DATE=${{ steps.date.outputs.date }}
           
-          # Extract version components
+          # 解析版本号组件（主版本.次版本.修订版本）
           if [[ $LATEST_TAG =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-            MAJOR=${BASH_REMATCH[1]}
-            MINOR=${BASH_REMATCH[2]}
-            PATCH=${BASH_REMATCH[3]}
+            MAJOR=${BASH_REMATCH[1]}    # 主版本号
+            MINOR=${BASH_REMATCH[2]}    # 次版本号
+            PATCH=${BASH_REMATCH[3]}    # 修订版本号
             
-            # Increment patch version
+            # 递增修订版本号
             NEW_PATCH=$((PATCH + 1))
             NEW_TAG="v$MAJOR.$MINOR.$NEW_PATCH-$DATE"
             
             echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
-            echo "New tag: $NEW_TAG"
+            echo "新标签: $NEW_TAG"
           else
+            # 如果无法解析版本号，则使用默认初始版本
             NEW_TAG="v0.0.1-$DATE"
             echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
-            echo "New tag: $NEW_TAG"
+            echo "新标签: $NEW_TAG"
           fi
 
-      - name: Update version in code (no tag)
+      # ============================================================
+      # 步骤11: 更新代码中的版本号（无现有标签时）
+      # ============================================================
+      - name: 更新代码版本号（无现有标签）
         id: update_version
-        if: steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
+        if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: |
           NEW_TAG=${{ steps.new_tag.outputs.new_tag }}
+          
+          # 获取代码中当前的版本号
           CURRENT_VERSION=$(grep -oE 'Version = "v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}"' tool.go | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}' || echo "")
           
-          echo "Current version in code: $CURRENT_VERSION"
-          echo "New version: $NEW_TAG"
+          echo "代码中当前版本: $CURRENT_VERSION"
+          echo "新版本: $NEW_TAG"
           
+          # 如果版本号不一致，则更新
           if [ "$CURRENT_VERSION" != "$NEW_TAG" ]; then
+            # 替换tool.go文件中的版本号
             sed -i "s/Version = \".*\"/Version = \"$NEW_TAG\"/" tool.go
             
+            # 配置Git用户信息并提交更改
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"
             git add tool.go
-            git commit -m "Update version to $NEW_TAG"
+            git commit -m "更新版本号至 $NEW_TAG"
+            
             echo "updated=true" >> $GITHUB_OUTPUT
-            echo "Version updated to $NEW_TAG"
+            echo "版本号已更新至 $NEW_TAG"
           else
             echo "updated=false" >> $GITHUB_OUTPUT
-            echo "Version is already up to date"
+            echo "版本号已是最新，无需更新"
           fi
 
-      - name: Update version in code (with tag)
+      # ============================================================
+      # 步骤12: 更新代码中的版本号（存在标签时）
+      # ============================================================
+      - name: 更新代码版本号（存在标签时）
         id: update_version_with_tag
-        if: steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag == 'true'
+        if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag == 'true'
         run: |
           TAG=${{ steps.check_tag.outputs.tag }}
+          
+          # 获取代码中当前的版本号
           CURRENT_VERSION=$(grep -oE 'Version = "v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}"' tool.go | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}' || echo "")
           
-          echo "Current version in code: $CURRENT_VERSION"
-          echo "Tag version: $TAG"
+          echo "代码中当前版本: $CURRENT_VERSION"
+          echo "标签版本: $TAG"
           
+          # 如果版本号不一致，则更新
           if [ "$CURRENT_VERSION" != "$TAG" ]; then
-            # 删除旧标签
+            # 删除旧标签（本地和远程）
             git tag -d $TAG
             git push origin :refs/tags/$TAG
             
-            # 更新版本号
+            # 更新代码中的版本号
             sed -i "s/Version = \".*\"/Version = \"$TAG\"/" tool.go
             
-            # 提交更改
+            # 配置Git用户信息并提交更改
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"
             git add tool.go
-            git commit -m "Update version to $TAG"
+            git commit -m "更新版本号至 $TAG"
             
-            # 在新提交上创建标签
+            # 在新提交上重新创建标签
             git tag $TAG
             
             # 推送更改和标签
@@ -183,16 +312,23 @@ jobs:
             git push origin $TAG
             
             echo "updated=true" >> $GITHUB_OUTPUT
-            echo "Version updated to $TAG and tag moved to new commit"
+            echo "版本号已更新至 $TAG，标签已移动到新提交"
           else
             echo "updated=false" >> $GITHUB_OUTPUT
-            echo "Version is already up to date"
+            echo "版本号已是最新，无需更新"
           fi
 
-      - name: Push tag
-        if: steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true' && steps.update_version.outputs.updated == 'true'
+      # ============================================================
+      # 步骤13: 推送新创建的标签
+      # ============================================================
+      - name: 推送新版本标签
+        if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true' && steps.update_version.outputs.updated == 'true'
         run: |
           NEW_TAG=${{ steps.new_tag.outputs.new_tag }}
+          
+          # 创建并推送新标签
           git tag $NEW_TAG
           git push --tags
           git push
+          
+          echo "新标签 $NEW_TAG 已成功推送"
