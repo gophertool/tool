@@ -12,7 +12,7 @@
 # - 检出代码 -> 设置Go环境 -> 运行测试 -> 检查版本更新 -> 创建标签
 # ==================================================================
 
-name: 发布工作流
+name: Release Workflow
 
 # 触发条件配置
 on:
@@ -36,7 +36,7 @@ jobs:
       # ============================================================
       # 步骤1: 检出代码仓库
       # ============================================================
-      - name: 检出代码仓库
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0    # 获取完整的Git历史，用于标签操作
@@ -44,7 +44,7 @@ jobs:
       # ============================================================
       # 步骤2: 设置Go开发环境
       # ============================================================
-      - name: 设置Go开发环境
+      - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.24'  # 使用Go 1.24版本
@@ -52,13 +52,13 @@ jobs:
       # ============================================================
       # 步骤3: 运行项目测试
       # ============================================================
-      - name: 运行项目测试
+      - name: Run tests
         run: go test -v ./...
 
       # ============================================================
       # 步骤4: 检查提交是否涉及代码文件
       # ============================================================
-      - name: 检查提交的代码文件变更
+      - name: Check code changes in commit
         id: check_code_changes
         run: |
           # 获取当前提交相对于上一个提交的变更文件列表
@@ -105,7 +105,7 @@ jobs:
       # ============================================================
       # 步骤5: 检查提交信息中是否包含版本更新
       # ============================================================
-      - name: 检查提交信息中的版本更新
+      - name: Check for version update in commit
         id: check_version
         run: |
           # 获取最新提交的信息
@@ -127,7 +127,7 @@ jobs:
       # ============================================================
       # 步骤6: 根据提交信息更新代码中的版本号
       # ============================================================
-      - name: 根据提交信息更新代码版本号
+      - name: Update version in code from commit
         if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update == 'true'
         id: update_from_commit
         run: |
@@ -164,7 +164,7 @@ jobs:
       # ============================================================
       # 步骤7: 检查当前提交是否已有标签
       # ============================================================
-      - name: 检查当前提交的标签状态
+      - name: Check if latest commit has a tag
         if: steps.check_code_changes.outputs.has_code_changes == 'true'
         id: check_tag
         run: |
@@ -185,7 +185,7 @@ jobs:
       # ============================================================
       # 步骤8: 获取当前日期（用于版本号生成）
       # ============================================================
-      - name: 获取当前日期
+      - name: Get current date
         id: date
         if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
@@ -193,7 +193,7 @@ jobs:
       # ============================================================
       # 步骤9: 获取最新的版本标签
       # ============================================================
-      - name: 获取最新版本标签
+      - name: Get latest tag
         id: latest_tag
         if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: |
@@ -215,7 +215,7 @@ jobs:
       # ============================================================
       # 步骤10: 创建新的版本标签
       # ============================================================
-      - name: 创建新版本标签
+      - name: Create new tag
         id: new_tag
         if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: |
@@ -244,7 +244,7 @@ jobs:
       # ============================================================
       # 步骤11: 更新代码中的版本号（无现有标签时）
       # ============================================================
-      - name: 更新代码版本号（无现有标签）
+      - name: Update version in code (no tag)
         id: update_version
         if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true'
         run: |
@@ -277,7 +277,7 @@ jobs:
       # ============================================================
       # 步骤12: 更新代码中的版本号（存在标签时）
       # ============================================================
-      - name: 更新代码版本号（存在标签时）
+      - name: Update version in code (with tag)
         id: update_version_with_tag
         if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag == 'true'
         run: |
@@ -321,7 +321,7 @@ jobs:
       # ============================================================
       # 步骤13: 推送新创建的标签
       # ============================================================
-      - name: 推送新版本标签
+      - name: Push tag
         if: steps.check_code_changes.outputs.has_code_changes == 'true' && steps.check_version.outputs.has_version_update != 'true' && steps.check_tag.outputs.has_tag != 'true' && steps.update_version.outputs.updated == 'true'
         run: |
           NEW_TAG=${{ steps.new_tag.outputs.new_tag }}
