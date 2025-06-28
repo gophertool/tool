@@ -59,6 +59,15 @@ build: build-plugins build-main
 run: build
 	@echo "正在运行示例程序..."
 	@./$(MAIN_BINARY)
+	@echo "示例程序运行完成"
+	@$(MAKE) clean
+
+# 运行测试
+.PHONY: test
+test: build
+	@echo "正在运行测试..."
+	@go test -v ./...
+	@echo "测试完成"
 
 # 下载依赖
 .PHONY: deps
