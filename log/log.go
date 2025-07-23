@@ -28,6 +28,9 @@ type Logger struct {
 	filter   func(string) bool
 }
 
+// callerLevel 全局调用者层级设置，默认为3
+var callerLevel = 3
+
 func (l *Logger) Printf(format string, s ...any) {
 	expr := fmt.Sprintf(format, s...)
 	l.Println(expr)
@@ -43,7 +46,7 @@ func (l *Logger) Println(s ...any) {
 			return
 		}
 	}
-	_, _, depth := findCaller()
+	_, _, depth := findCallerWithLevel(callerLevel)
 	_ = l.log.Output(depth, expr)
 }
 
@@ -74,10 +77,23 @@ var dbg = &Logger{
 // findCaller 寻找真正的调用者位置
 // 跳过本包内的函数调用，找到第一个非log包的调用位置
 func findCaller() (file string, line int, depth int) {
-	const pkgPath = "util/log/"
+	return findCallerWithLevel(3)
+}
 
-	// 从第3层调用栈开始查找
-	for depth = 3; depth < 15; depth++ {
+// findCallerWithLevel 寻找真正的调用者位置，允许用户指定起始层级
+// startLevel: 开始搜索的调用栈层级，通常为3（跳过runtime.Caller、findCallerWithLevel、调用者）
+// 返回值: file-文件路径, line-行号, depth-实际找到的调用栈深度
+func findCallerWithLevel(startLevel int) (file string, line int, depth int) {
+	const pkgPath = "github.com/gophertool/tool/log"
+	const maxDepth = 15
+
+	// 参数校验
+	if startLevel < 1 {
+		startLevel = 3
+	}
+
+	// 从指定层级开始查找
+	for depth = startLevel; depth < maxDepth; depth++ {
 		_, file, line, ok := runtime.Caller(depth)
 		if !ok {
 			break
@@ -89,17 +105,43 @@ func findCaller() (file string, line int, depth int) {
 		}
 	}
 
-	// 如果找不到非log包的调用，则使用默认值（第3层调用栈）
-	_, file, line, _ = runtime.Caller(3)
-	return file, line, 3
+	// 如果找不到非log包的调用，则使用默认值
+	// 如果startLevel过大，则使用较小的fallback值
+	fallbackLevel := startLevel
+	if fallbackLevel > 10 {
+		fallbackLevel = 3
+	}
+	_, file, line, ok := runtime.Caller(fallbackLevel)
+	if !ok {
+		// 如果fallback也失败，使用最小值
+		_, file, line, _ = runtime.Caller(1)
+		return file, line, 1
+	}
+	return file, line, fallbackLevel
 }
 
 func debugModifier(s string) string {
-	file, line, _ := findCaller()
+	file, line, _ := findCallerWithLevel(callerLevel)
 	file = file[strings.LastIndex(file, "/")+1:]
 	logStr := fmt.Sprintf("%s%s(%d) %s", "> ", file, line, s)
 	logStr = Yellow(logStr)
 	return logStr
+}
+
+// SetCallerLevel 设置日志调用者查找的起始层级
+// level: 起始层级，通常为3，如果需要跳过更多层级可以增加此值
+// 此函数影响所有日志输出中显示的调用者位置
+func SetCallerLevel(level int) {
+	if level < 1 {
+		level = 3
+	}
+	callerLevel = level
+}
+
+// GetCallerLevel 获取当前的调用者层级设置
+// 返回当前设置的调用栈起始层级
+func GetCallerLevel() int {
+	return callerLevel
 }
 
 func debugFilter(_ string) bool {
