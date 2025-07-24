@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -34,8 +35,8 @@ type ToolPluginInterface interface {
 	GetTools() ([]Tool, error)
 
 	// CallTool 调用指定的工具并返回结果
-	// 这是原始的方法，接受 map[string]interface{} 类型的参数
-	CallTool(toolName string, params map[string]interface{}) (*CallToolResult, error)
+	// 这是原始的方法，接受 map[string]any 类型的参数
+	CallTool(toolName string, params map[string]any) (*CallToolResult, error)
 
 	// GetPluginInfo 获取插件的基本信息
 	GetPluginInfo() (PluginInfo, error)
@@ -69,12 +70,12 @@ type ToolPluginRPC struct {
 // GetTools 实现 ToolPluginInterface 接口的 GetTools 方法
 func (t *ToolPluginRPC) GetTools() ([]Tool, error) {
 	var tools []Tool
-	err := t.client.Call("Plugin.GetTools", new(interface{}), &tools)
+	err := t.client.Call("Plugin.GetTools", new(any), &tools)
 	return tools, err
 }
 
 // CallTool 实现 ToolPluginInterface 接口的 CallTool 方法
-func (t *ToolPluginRPC) CallTool(toolName string, params map[string]interface{}) (*CallToolResult, error) {
+func (t *ToolPluginRPC) CallTool(toolName string, params map[string]any) (*CallToolResult, error) {
 	args := CallToolArgs{
 		ToolName: toolName,
 		Params:   params,
@@ -86,13 +87,13 @@ func (t *ToolPluginRPC) CallTool(toolName string, params map[string]interface{})
 
 // CallToolWithStruct 实现 ToolPluginGenericInterface 接口的 CallToolWithStruct 方法
 // 使用结构化参数调用工具
-func (t *ToolPluginRPC) CallToolWithStruct(toolName string, params interface{}) (*CallToolResult, error) {
-	// 在客户端就将结构体转换为 map[string]interface{}
+func (t *ToolPluginRPC) CallToolWithStruct(toolName string, params any) (*CallToolResult, error) {
+	// 在客户端就将结构体转换为 map[string]any
 	// 这样可以避免 gob 类型注册问题
-	var paramsMap map[string]interface{}
+	var paramsMap map[string]any
 
 	// 检查是否已经是map类型
-	if mapParams, ok := params.(map[string]interface{}); ok {
+	if mapParams, ok := params.(map[string]any); ok {
 		paramsMap = mapParams
 	} else {
 		// 将结构体转换为map
@@ -106,22 +107,22 @@ func (t *ToolPluginRPC) CallToolWithStruct(toolName string, params interface{}) 
 // GetPluginInfo 实现 ToolPluginInterface 接口的 GetPluginInfo 方法
 func (t *ToolPluginRPC) GetPluginInfo() (PluginInfo, error) {
 	var info PluginInfo
-	err := t.client.Call("Plugin.GetPluginInfo", new(interface{}), &info)
+	err := t.client.Call("Plugin.GetPluginInfo", new(any), &info)
 	return info, err
 }
 
 // CallToolArgs 工具调用参数结构体
 type CallToolArgs struct {
-	ToolName string                 `json:"tool_name"` // 工具名称
-	Params   map[string]interface{} `json:"params"`    // 调用参数
+	ToolName string         `json:"tool_name"` // 工具名称
+	Params   map[string]any `json:"params"`    // 调用参数
 }
 
 // StructCallToolArgs 支持结构化参数的工具调用参数结构体
 // 注意：由于客户端现在会将结构体转换为map，这个结构体主要用于接口完整性
-// 实际使用中参数会是 map[string]interface{} 类型
+// 实际使用中参数会是 map[string]any 类型
 type StructCallToolArgs struct {
-	ToolName string      `json:"tool_name"` // 工具名称
-	Params   interface{} `json:"params"`    // 结构化参数（通常是map[string]interface{}）
+	ToolName string `json:"tool_name"` // 工具名称
+	Params   any    `json:"params"`    // 结构化参数（通常是map[string]any）
 }
 
 // ToolPluginRPCServer RPC服务器端实现
@@ -131,7 +132,7 @@ type ToolPluginRPCServer struct {
 }
 
 // GetTools 处理来自客户端的 GetTools RPC 调用
-func (s *ToolPluginRPCServer) GetTools(args interface{}, resp *[]Tool) error {
+func (s *ToolPluginRPCServer) GetTools(args any, resp *[]Tool) error {
 	tools, err := s.Impl.GetTools()
 	*resp = tools
 	return err
@@ -167,7 +168,7 @@ func (s *ToolPluginRPCServer) CallToolWithStruct(args StructCallToolArgs, resp *
 	}
 
 	// 如果没有实现泛型接口，尝试将参数转换为map并使用标准接口
-	paramsMap, ok := args.Params.(map[string]interface{})
+	paramsMap, ok := args.Params.(map[string]any)
 	if !ok {
 		// 如果不是map，尝试将结构体转换为map
 		paramsMap = structToMap(args.Params)
@@ -183,7 +184,7 @@ func (s *ToolPluginRPCServer) CallToolWithStruct(args StructCallToolArgs, resp *
 }
 
 // GetPluginInfo 处理来自客户端的 GetPluginInfo RPC 调用
-func (s *ToolPluginRPCServer) GetPluginInfo(args interface{}, resp *PluginInfo) error {
+func (s *ToolPluginRPCServer) GetPluginInfo(args any, resp *PluginInfo) error {
 	info, err := s.Impl.GetPluginInfo()
 	*resp = info
 	return err
@@ -197,13 +198,13 @@ type ToolPlugin struct {
 
 // Server 返回插件的RPC服务器实现
 // 这个方法在插件进程中被调用
-func (p *ToolPlugin) Server(*plugin.MuxBroker) (interface{}, error) {
+func (p *ToolPlugin) Server(*plugin.MuxBroker) (any, error) {
 	return &ToolPluginRPCServer{Impl: p.Impl}, nil
 }
 
 // Client 返回插件的RPC客户端实现
 // 这个方法在主程序中被调用，用于与插件通信
-func (ToolPlugin) Client(b *plugin.MuxBroker, c *rpc.Client) (interface{}, error) {
+func (ToolPlugin) Client(b *plugin.MuxBroker, c *rpc.Client) (any, error) {
 	return &ToolPluginRPC{client: c}, nil
 }
 
@@ -258,9 +259,12 @@ func (pm *PluginManager) ScanPlugins(pluginDir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-
-		// 检查文件是否以.tool.plugin结尾且是可执行文件
-		if strings.HasSuffix(path, ".tool.plugin") && !info.IsDir() {
+		lastPath := ".tool.plugin"
+		if runtime.GOOS == "windows" {
+			lastPath += ".exe"
+		}
+		// 检查文件是否以.tool.plugin 或 .tool.plugin.exe 结尾且是可执行文件
+		if strings.HasSuffix(path, lastPath) && !info.IsDir() {
 			// 检查文件是否可执行
 			if info.Mode()&0111 != 0 {
 				pluginPaths = append(pluginPaths, path)
@@ -434,7 +438,7 @@ func (pm *PluginManager) ListTools() []Tool {
 }
 
 // CallTool 调用指定的工具
-func (pm *PluginManager) CallTool(toolName string, params map[string]interface{}) (*CallToolResult, error) {
+func (pm *PluginManager) CallTool(toolName string, params map[string]any) (*CallToolResult, error) {
 	// 查找工具对应的插件
 	plugin, exists := pm.GetPluginByTool(toolName)
 	if !exists {
@@ -445,10 +449,10 @@ func (pm *PluginManager) CallTool(toolName string, params map[string]interface{}
 	return plugin.Instance.CallTool(toolName, params)
 }
 
-// structToMap 将任意结构体转换为 map[string]interface{}
+// structToMap 将任意结构体转换为 map[string]any
 // 使用 JSON 序列化和反序列化实现，保留字段标签
-func structToMap(obj interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
+func structToMap(obj any) map[string]any {
+	result := make(map[string]any)
 
 	// 首先检查是否为结构体
 	v := reflect.ValueOf(obj)
@@ -472,15 +476,15 @@ func structToMap(obj interface{}) map[string]interface{} {
 	err = json.Unmarshal(bytes, &result)
 	if err != nil {
 		log.Printf("JSON 转换为 map 失败: %v", err)
-		return make(map[string]interface{})
+		return make(map[string]any)
 	}
 
 	return result
 }
 
 // CallToolWithStruct 使用结构化参数调用指定的工具
-// 这个方法允许使用强类型参数而不是 map[string]interface{}
-func (pm *PluginManager) CallToolWithStruct(toolName string, params interface{}) (*CallToolResult, error) {
+// 这个方法允许使用强类型参数而不是 map[string]any
+func (pm *PluginManager) CallToolWithStruct(toolName string, params any) (*CallToolResult, error) {
 	// 获取工具对应的插件
 	plugin, found := pm.GetPluginByTool(toolName)
 	if !found {
@@ -493,11 +497,11 @@ func (pm *PluginManager) CallToolWithStruct(toolName string, params interface{})
 		return genericPlugin.CallToolWithStruct(toolName, params)
 	}
 
-	// 如果插件没有实现泛型接口，尝试将参数转换为map[string]interface{}
-	var paramsMap map[string]interface{}
+	// 如果插件没有实现泛型接口，尝试将参数转换为map[string]any
+	var paramsMap map[string]any
 
 	// 检查是否已经是map类型
-	if mapParams, ok := params.(map[string]interface{}); ok {
+	if mapParams, ok := params.(map[string]any); ok {
 		paramsMap = mapParams
 	} else {
 		// 尝试将结构体转换为map
@@ -509,7 +513,7 @@ func (pm *PluginManager) CallToolWithStruct(toolName string, params interface{})
 }
 
 // CallToolWithContext 带上下文调用指定的工具
-func (pm *PluginManager) CallToolWithContext(ctx context.Context, toolName string, params map[string]interface{}) (*CallToolResult, error) {
+func (pm *PluginManager) CallToolWithContext(ctx context.Context, toolName string, params map[string]any) (*CallToolResult, error) {
 	// 创建带取消功能的通道
 	resultChan := make(chan *CallToolResult, 1)
 	errorChan := make(chan error, 1)
@@ -536,9 +540,9 @@ func (pm *PluginManager) CallToolWithContext(ctx context.Context, toolName strin
 }
 
 // CallToolWithStructContext 使用结构化参数和上下文调用指定的工具
-// 这个方法允许使用结构体参数而不是 map[string]interface{}
+// 这个方法允许使用结构体参数而不是 map[string]any
 // 同时支持上下文取消和超时
-func (pm *PluginManager) CallToolWithStructContext(ctx context.Context, toolName string, params interface{}) (*CallToolResult, error) {
+func (pm *PluginManager) CallToolWithStructContext(ctx context.Context, toolName string, params any) (*CallToolResult, error) {
 	// 检查上下文是否已取消
 	select {
 	case <-ctx.Done():
@@ -561,11 +565,11 @@ func (pm *PluginManager) CallToolWithStructContext(ctx context.Context, toolName
 		return genericPlugin.CallToolWithStruct(toolName, params)
 	}
 
-	// 如果插件没有实现泛型接口，尝试将参数转换为 map[string]interface{}
-	var paramsMap map[string]interface{}
+	// 如果插件没有实现泛型接口，尝试将参数转换为 map[string]any
+	var paramsMap map[string]any
 
 	// 检查是否已经是map类型
-	if mapParams, ok := params.(map[string]interface{}); ok {
+	if mapParams, ok := params.(map[string]any); ok {
 		paramsMap = mapParams
 	} else {
 		// 尝试将结构体转换为map
@@ -628,7 +632,7 @@ func registerGobTypes() {
 // 注意：由于客户端现在会自动将结构体转换为map，通常不再需要调用此函数
 // 此函数保留用于特殊情况下需要传递原始结构体的场景
 // 例如：RegisterStructType(MyCustomStruct{}) 将注册 MyCustomStruct 类型
-func RegisterStructType(structType interface{}) {
+func RegisterStructType(structType any) {
 	// 获取类型信息
 	typeName := fmt.Sprintf("%T", structType)
 	// 注册类型
